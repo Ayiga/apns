@@ -2,14 +2,12 @@ package apns
 
 import "github.com/stretchr/testify/mock"
 
+// MockClient implements Client
 type MockClient struct {
 	mock.Mock
 }
 
-func (m *MockClient) ConnectAndWrite(resp *PushNotificationResponse, payload []byte) (err error) {
-	return m.Called(resp, payload).Error(0)
-}
-
+// Send implements Client
 func (m *MockClient) Send(pn *PushNotification) (resp *PushNotificationResponse) {
 	r := m.Called(pn).Get(0)
 	if r != nil {
@@ -19,3 +17,9 @@ func (m *MockClient) Send(pn *PushNotification) (resp *PushNotificationResponse)
 	}
 	return nil
 }
+
+// SetMaxConns implements Client
+func (*MockClient) SetMaxConns(m int) {}
+
+// SetMaxIdleConns implements Client
+func (*MockClient) SetMaxIdleConns(m int) {}

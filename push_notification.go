@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"time"
@@ -14,9 +15,11 @@ import (
 // Push commands always start with command value 2.
 const pushCommandValue = 2
 
-// Your total notification payload cannot exceed 2 KB.
+// MaxPayloadSizeBytes represents the maximum size of a payload, up to 2KB
 const MaxPayloadSizeBytes = 2048
 
+// IdentifierUbound represents the upper bound, or an error identifier.
+//
 // Every push notification gets a pseudo-unique identifier;
 // this establishes the upper boundary for it. Apple will return
 // this identifier if there is an issue sending your notification.
@@ -24,16 +27,48 @@ const IdentifierUbound = 9999
 
 // Constants related to the payload fields and their lengths.
 const (
-	deviceTokenItemid            = 1
-	payloadItemid                = 2
-	notificationIdentifierItemid = 3
-	expirationDateItemid         = 4
-	priorityItemid               = 5
-	deviceTokenLength            = 32
-	notificationIdentifierLength = 4
-	expirationDateLength         = 4
-	priorityLength               = 1
+	deviceTokenItemid            uint8  = 1
+	payloadItemid                uint8  = 2
+	notificationIdentifierItemid uint8  = 3
+	expirationDateItemid         uint8  = 4
+	priorityItemid               uint8  = 5
+	deviceTokenLength            uint16 = 32
+	notificationIdentifierLength uint16 = 4
+	expirationDateLength         uint16 = 4
+	priorityLength               uint16 = 1
 )
+
+func uuuidFormat(s string) string {
+	if len(s) == 36 {
+		return s
+	}
+
+	if len(s) == 32 {
+		first := s[:8]
+		second := s[8:12]
+		third := s[12:16]
+		fourth := s[16:20]
+		last := s[20:]
+		return fmt.Sprintf("%s-%s-%s-%s-%s", first, second, third, fourth, last)
+	}
+
+	return s
+}
+
+func generateUUID() string {
+	id := make([]byte, 16)
+
+	r := 0
+	for r < len(id) {
+		n, err := rand.Read(id[r:])
+		if err != nil {
+			return ""
+		}
+		r += n
+	}
+
+	return uuuidFormat(hex.EncodeToString(id))
+}
 
 // Payload contains the notification data for your request.
 //
@@ -75,6 +110,7 @@ func NewAlertDictionary() *AlertDictionary {
 // PushNotification is the wrapper for the Payload.
 // The length fields are computed in ToBytes() and aren't represented here.
 type PushNotification struct {
+	UUID        string
 	Identifier  int32
 	Expiry      uint32
 	DeviceToken string
@@ -85,11 +121,12 @@ type PushNotification struct {
 // NewPushNotification creates and returns a PushNotification structure.
 // It also initializes the pseudo-random identifier.
 func NewPushNotification() (pn *PushNotification) {
-	pn = new(PushNotification)
-	pn.payload = make(map[string]interface{})
-	pn.Identifier = rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(IdentifierUbound)
-	pn.Priority = 10
-	return
+	return &PushNotification{
+		UUID:       generateUUID(),
+		payload:    map[string]interface{}{},
+		Identifier: rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(IdentifierUbound),
+		Priority:   10,
+	}
 }
 
 // AddPayload sets the "aps" payload section of the request. It also
@@ -142,7 +179,7 @@ func (pn *PushNotification) ToBytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(token) != deviceTokenLength {
+	if uint16(len(token)) != deviceTokenLength {
 		return nil, errors.New("device token has incorrect length")
 	}
 	payload, err := pn.PayloadJSON()
@@ -154,20 +191,20 @@ func (pn *PushNotification) ToBytes() ([]byte, error) {
 	}
 
 	frameBuffer := new(bytes.Buffer)
-	binary.Write(frameBuffer, binary.BigEndian, uint8(deviceTokenItemid))
-	binary.Write(frameBuffer, binary.BigEndian, uint16(deviceTokenLength))
+	binary.Write(frameBuffer, binary.BigEndian, deviceTokenItemid)
+	binary.Write(frameBuffer, binary.BigEndian, deviceTokenLength)
 	binary.Write(frameBuffer, binary.BigEndian, token)
-	binary.Write(frameBuffer, binary.BigEndian, uint8(payloadItemid))
+	binary.Write(frameBuffer, binary.BigEndian, payloadItemid)
 	binary.Write(frameBuffer, binary.BigEndian, uint16(len(payload)))
 	binary.Write(frameBuffer, binary.BigEndian, payload)
-	binary.Write(frameBuffer, binary.BigEndian, uint8(notificationIdentifierItemid))
-	binary.Write(frameBuffer, binary.BigEndian, uint16(notificationIdentifierLength))
+	binary.Write(frameBuffer, binary.BigEndian, notificationIdentifierItemid)
+	binary.Write(frameBuffer, binary.BigEndian, notificationIdentifierLength)
 	binary.Write(frameBuffer, binary.BigEndian, pn.Identifier)
-	binary.Write(frameBuffer, binary.BigEndian, uint8(expirationDateItemid))
-	binary.Write(frameBuffer, binary.BigEndian, uint16(expirationDateLength))
+	binary.Write(frameBuffer, binary.BigEndian, expirationDateItemid)
+	binary.Write(frameBuffer, binary.BigEndian, expirationDateLength)
 	binary.Write(frameBuffer, binary.BigEndian, pn.Expiry)
-	binary.Write(frameBuffer, binary.BigEndian, uint8(priorityItemid))
-	binary.Write(frameBuffer, binary.BigEndian, uint16(priorityLength))
+	binary.Write(frameBuffer, binary.BigEndian, priorityItemid)
+	binary.Write(frameBuffer, binary.BigEndian, priorityLength)
 	binary.Write(frameBuffer, binary.BigEndian, pn.Priority)
 
 	buffer := bytes.NewBuffer([]byte{})
