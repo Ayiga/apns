@@ -346,6 +346,7 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 			vlogf("Error with the request: %s\n", err)
 			resp.Error = err
 			resp.Success = false
+			return
 		}
 
 		switch statusCode(response.StatusCode) {
