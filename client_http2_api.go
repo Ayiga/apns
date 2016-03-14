@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -300,9 +302,20 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 			return
 		}
 
+		host := client.gateway.Host
+		if strings.Contains(host, ":") {
+			host, _, err = net.SplitHostPort(host)
+			if err != nil {
+				vlogf("Unable to Split Host and Port: %s", err)
+				resp.Error = err
+				resp.Success = false
+				return
+			}
+		}
+
 		conf := &tls.Config{
 			Certificates: []tls.Certificate{cert},
-			ServerName:   client.gateway.Host,
+			ServerName:   host,
 		}
 
 		transport := http2.Transport{}
