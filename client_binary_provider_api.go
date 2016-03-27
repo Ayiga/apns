@@ -200,7 +200,6 @@ func (client *GatewayClient) dial() (*tls.Conn, error) {
 	conn, err := tls.Dial("tcp", host+":"+port, conf)
 	if err != nil {
 		vlogf("Error opening connection: %s", err)
-		conn.Close()
 		return nil, err
 	}
 
