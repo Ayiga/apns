@@ -352,6 +352,9 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 		}
 
 		request.Header.Add("apns-id", pn.UUID)
+		request.Header.Add("apns-priority", fmt.Sprintf("%d", pn.Priority))
+		request.Header.Add("apns-expiration", fmt.Sprintf("%d", pn.Expiry))
+
 		vlogf("apns-id: %s", pn.UUID)
 
 		response, err := transport.RoundTrip(request)
@@ -365,6 +368,8 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 		switch statusCode(response.StatusCode) {
 		case CodeSuccess:
 			vlogf("Push sent successfully\n")
+			resp.Success = true
+			resp.Error = nil
 			return
 		default:
 		}
