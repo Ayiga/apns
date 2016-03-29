@@ -215,8 +215,17 @@ type APIResponse struct {
 	Reason APIReason `json:"reason"`
 
 	// Timestamp is used for status code 410, and indicates the last time the
-	// specified device token was valid for the topic.
-	Timestamp time.Time `json:"timestamp,omitempty"`
+	// specified device token was valid for the topic.  This is a unix timestamp
+	// represented in milli seconds
+	Timestamp int64 `json:"timestamp,omitempty"`
+}
+
+// ToTime will take the underlying timestamp and convert it to to a timestamp,
+// in Unix time since Epoc 0.
+func (r APIResponse) ToTime() time.Time {
+	secs := (r.Timestamp / 1000)
+	nsecs := (r.Timestamp % 1000) * 1000000
+	return time.Unix(secs, nsecs)
 }
 
 // HTTP2Client contains the fields necessary to communicate
