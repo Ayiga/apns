@@ -14,16 +14,16 @@ var UseHTTP2API = true
 
 // BareClient will create a new Client that will use the base64 certificate and
 // key to conduct it's transations
-func BareClient(gateway, certificateBase64, keyBase64 string) (c Client) {
+func BareClient(gateway, certificateBase64, keyBase64 string) (c Client, err error) {
 	if UseHTTP2API {
 		return BareHTTP2Client(gateway, certificateBase64, keyBase64)
 	}
-	return BareGatewayClient(gateway, certificateBase64, keyBase64)
+	return BareGatewayClient(gateway, certificateBase64, keyBase64), nil
 }
 
 // NewClient will create a new Client that will use the certificate and key at
 // the specifies for it's transactions
-func NewClient(gateway, certificateFile, keyFile string) (c Client) {
+func NewClient(gateway, certificateFile, keyFile string) (c Client, err error) {
 	if UseHTTP2API {
 		return NewHTTP2Client(gateway, certificateFile, keyFile)
 	}

@@ -77,10 +77,10 @@ func BareGatewayClient(gateway, certificateBase64, keyBase64 string) (c Client) 
 
 // NewGatewayClient assumes you'll be passing in paths that
 // point to your certificate and key.
-func NewGatewayClient(gateway, certificateFile, keyFile string) (c Client) {
+func NewGatewayClient(gateway, certificateFile, keyFile string) (c Client, err error) {
 	uri, err := getURL(gateway)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	client := &GatewayClient{
@@ -92,7 +92,7 @@ func NewGatewayClient(gateway, certificateFile, keyFile string) (c Client) {
 		idleConn:        make(chan *tls.Conn, defaultMaxIdle),
 	}
 
-	return client
+	return client, nil
 }
 
 // SetMaxConns will set the maximum number of connections usable within the

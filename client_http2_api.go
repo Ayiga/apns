@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/context"
+	"golang.org/x/net/context/ctxhttp"
 	"golang.org/x/net/http2"
 )
 
@@ -20,7 +22,7 @@ type statusCode int
 
 // ErrMaxRetriesExceeded represents an error that states that the push was
 // attempted to be sent, and was unsuccessful up to the alloted retry count
-var ErrMaxRetriesExceeded = errors.New("Tried to send the push, and failed beyodn the maximum retry count")
+var ErrMaxRetriesExceeded = errors.New("Tried to send the push, and failed beyond the maximum retry count")
 
 const (
 	// CodeSuccess represents that everything's ok
@@ -74,7 +76,10 @@ var statusCodeReasons = map[statusCode]string{
 
 // Error implements the error interface
 func (s statusCode) Error() string {
-	return statusCodeReasons[s]
+	if str := statusCodeReasons[s]; str != "" {
+		return str
+	}
+	return fmt.Sprintf("Code: %d", s)
 }
 
 // APIReason represents the potential reasons returned for an API Request result
@@ -124,7 +129,7 @@ const (
 
 	// ReasonUnregistered represetns a reason that specifies that the device
 	// token has unregistered for notifications for the given topic.
-	ReasonUnregistered APIReason = "ReasonUnregistered"
+	ReasonUnregistered APIReason = "Unregistered"
 
 	// ReasonDuplicateHeaders represents a reason that specifies that one or
 	// more headers were repeated.
@@ -203,7 +208,10 @@ var apiReasons = map[APIReason]string{
 }
 
 func (a APIReason) Error() string {
-	return apiReasons[a]
+	if str := apiReasons[a]; str != "" {
+		return str
+	}
+	return string(a)
 }
 
 // APIResponse represents a potential resposne from the APN services's HTTP2
@@ -228,6 +236,10 @@ func (r APIResponse) ToTime() time.Time {
 	return time.Unix(secs, nsecs)
 }
 
+func (r APIResponse) String() string {
+	return fmt.Sprintf("APIResponse{ Reason: %s, Timestamp: %s }", r.Reason.Error(), r.ToTime())
+}
+
 // HTTP2Client contains the fields necessary to communicate
 // with Apple, such as the gateway to use and your
 // certificate contents.
@@ -239,11 +251,14 @@ func (r APIResponse) ToTime() time.Time {
 // but if you prefer you can use the certificateBase64
 // and keyBase64 fields to store the actual contents.
 type HTTP2Client struct {
-	gateway           *url.URL
-	certificateFile   string
-	certificateBase64 string
-	keyFile           string
-	keyBase64         string
+	gateway *url.URL
+
+	transport *http2.Transport
+
+	// certificateFile   string
+	// certificateBase64 string
+	// keyFile           string
+	// keyBase64         string
 }
 
 // the HTTP2 APNs Provider API tends to be of the following format, url wise:
@@ -252,38 +267,69 @@ type HTTP2Client struct {
 // api.development.push.apple.com:443
 // api.push.apple.com:443
 
-// BareHTTP2Client can be used to set the contents of your
-// certificate and key blocks manually.
-func BareHTTP2Client(gateway, certificateBase64, keyBase64 string) (c Client) {
-	uri, err := getURL(gateway)
-	if err != nil {
-		return nil
+func http2ClientWithCert(uri *url.URL, cert tls.Certificate) (c Client, err error) {
+	host := uri.Host
+	vlogf("URI: %s", uri.String())
+	if strings.Contains(host, ":") {
+		host, _, err = net.SplitHostPort(host)
+		if err != nil {
+			vlogf("Unable to Split Host and Port: %s", err)
+			return nil, err
+		}
 	}
+
+	conf := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ServerName:   host,
+	}
+
+	transport := http2.Transport{}
+	transport.TLSClientConfig = conf
 
 	client := &HTTP2Client{
-		gateway:           uri,
-		certificateBase64: certificateBase64,
-		keyBase64:         keyBase64,
+		gateway:   uri,
+		transport: &transport,
 	}
 
-	return client
+	return client, nil
+}
+
+// BareHTTP2Client can be used to set the contents of your
+// certificate and key blocks manually.
+func BareHTTP2Client(gateway, certificateBase64, keyBase64 string) (c Client, err error) {
+	uri, err := getURL(gateway)
+	if err != nil {
+		return nil, err
+	}
+
+	// The user did not specify raw block contents, so check the filesystem.
+	cert, err := tls.X509KeyPair([]byte(certificateBase64), []byte(keyBase64))
+
+	if err != nil {
+		vlogf("Error loading certificates: %s\n", err)
+		return nil, err
+	}
+
+	return http2ClientWithCert(uri, cert)
 }
 
 // NewHTTP2Client assumes you'll be passing in paths that
 // point to your certificate and key.
-func NewHTTP2Client(gateway, certificateFile, keyFile string) (c Client) {
+func NewHTTP2Client(gateway, certificateFile, keyFile string) (c Client, err error) {
 	uri, err := getURL(gateway)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	client := &HTTP2Client{
-		gateway:         uri,
-		certificateFile: certificateFile,
-		keyFile:         keyFile,
+	// The user provided the raw block contents, so use that.
+	cert, err := tls.LoadX509KeyPair(certificateFile, keyFile)
+
+	if err != nil {
+		vlogf("Error loading certificates: %s\n", err)
+		return nil, err
 	}
 
-	return client
+	return http2ClientWithCert(uri, cert)
 }
 
 const apiMaxRetryCount = 4
@@ -293,43 +339,6 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 	resp = new(PushNotificationResponse)
 
 	for i := 0; i < apiMaxRetryCount; i++ {
-
-		var cert tls.Certificate
-		var err error
-		if len(client.certificateBase64) == 0 && len(client.keyBase64) == 0 {
-			// The user did not specify raw block contents, so check the filesystem.
-			cert, err = tls.LoadX509KeyPair(client.certificateFile, client.keyFile)
-		} else {
-			// The user provided the raw block contents, so use that.
-			cert, err = tls.X509KeyPair([]byte(client.certificateBase64), []byte(client.keyBase64))
-		}
-
-		if err != nil {
-			vlogf("Error loading certificates: %s\n", err)
-			resp.Error = err
-			resp.Success = false
-			return
-		}
-
-		host := client.gateway.Host
-		if strings.Contains(host, ":") {
-			host, _, err = net.SplitHostPort(host)
-			if err != nil {
-				vlogf("Unable to Split Host and Port: %s", err)
-				resp.Error = err
-				resp.Success = false
-				return
-			}
-		}
-
-		conf := &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			ServerName:   host,
-		}
-
-		transport := http2.Transport{}
-		transport.TLSClientConfig = conf
-
 		path := fmt.Sprintf("/3/device/%s", pn.DeviceToken)
 
 		uri, err := client.gateway.Parse(path)
@@ -350,7 +359,7 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 
 		buff := bytes.NewBuffer(payload)
 
-		vlogf("Attempting to being APN API Call %s\n", path)
+		vlogf("Attempting to begin APN API Call %s\n", path)
 
 		request, err := http.NewRequest("POST", uri.String(), buff)
 		if err != nil {
@@ -359,6 +368,8 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 			resp.Success = false
 			return
 		}
+		// set to automatically close on success...
+		request.Close = true
 
 		request.Header.Add("apns-id", pn.UUID)
 		request.Header.Add("apns-priority", fmt.Sprintf("%d", pn.Priority))
@@ -366,8 +377,25 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 
 		vlogf("apns-id: %s", pn.UUID)
 
-		response, err := transport.RoundTrip(request)
+		// response, err := transport.RoundTrip(request)
+
+		httpc := &http.Client{
+			Transport: client.transport,
+		}
+
+		ctx, _ := context.WithTimeout(context.Background(), time.Second*5)
+
+		response, err := ctxhttp.Do(ctx, httpc, request)
+
 		if err != nil {
+			// request timed out
+			if err == context.DeadlineExceeded {
+				vlogf("Request Timed out with error: %s\n", err)
+
+				// try again
+				continue
+			}
+
 			vlogf("Error with the request: %s\n", err)
 			resp.Error = err
 			resp.Success = false
@@ -421,6 +449,7 @@ func (client *HTTP2Client) Send(pn *PushNotification) (resp *PushNotificationRes
 			resp.Success = false
 			return
 		default:
+			vlogf("Unrecognized Response for attempt to send push: %s, %d", result, response.StatusCode)
 			continue
 		}
 	}
